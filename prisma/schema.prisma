@@ -1,0 +1,44 @@
+// Gauge, product analytics for Northwind Notes.
+// Two tables. Everything the dashboards show is an aggregate over Event,
+// computed in Postgres; see src/lib/queries.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Plan {
+  free
+  team
+  business
+}
+
+model User {
+  id         String   @id
+  plan       Plan
+  country    String   @db.VarChar(2)
+  signedUpAt DateTime @map("signed_up_at") @db.Timestamptz(3)
+  events     Event[]
+
+  @@index([signedUpAt])
+  @@map("users")
+}
+
+model Event {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar(40)
+  userId    String   @map("user_id")
+  sessionId String   @map("session_id") @db.VarChar(32)
+  ts        DateTime @db.Timestamptz(3)
+  props     Json     @default("{}")
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([ts])
+  @@index([name, ts])
+  @@index([userId, ts])
+  @@map("events")
+}
