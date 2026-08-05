@@ -32,12 +32,16 @@ export function funnel(range: DateRange, steps: string[]) {
           GROUP BY e.user_id)`)
       }
     })
-    const selects = steps.map((_, i) => Prisma.sql`(SELECT count(*) FROM ${Prisma.raw(`s${i}`)})`)
+    // Each count gets its own alias: duplicate column names collapse into one key.
+    const selects = steps.map(
+      (_, i) => Prisma.sql`(SELECT count(*) FROM ${Prisma.raw(`s${i}`)}) AS ${Prisma.raw(`c${i}`)}`,
+    )
     const rows = await db.$queryRaw<Array<Record<string, bigint>>>(Prisma.sql`
       WITH ${Prisma.join(ctes, ', ')}
       SELECT ${Prisma.join(selects, ', ')}
     `)
-    const counts = Object.values(rows[0] ?? {}).map(Number)
+    const row = rows[0] ?? {}
+    const counts = steps.map((_, i) => Number(row[`c${i}`] ?? 0))
     return shapeFunnel(steps, counts)
   })
 }
