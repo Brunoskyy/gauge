@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import type { ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { IBM_Plex_Mono, Inter } from 'next/font/google'
 
 import { Nav } from '@/components/nav'
@@ -28,7 +28,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         >
           Skip to content
         </a>
-        <Nav />
+        {/* Nav reads the search params to carry the date range between pages, which
+            opts it out of static rendering; the boundary keeps the 404 page static. */}
+        <Suspense fallback={<div className="border-line bg-surface h-14 border-b" />}>
+          <Nav />
+        </Suspense>
         <main id="main" className="mx-auto max-w-6xl px-4 pt-6 pb-20 sm:px-6">
           {children}
         </main>
