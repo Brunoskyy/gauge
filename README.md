@@ -131,7 +131,7 @@ instead of noise.
 npm test
 ```
 
-37 tests without a database: the parameter parsing (every fallback), the
+32 tests without a database: the parameter parsing (every fallback), the
 retention and funnel shaping, CSV escaping, the seed's invariants (every
 event after its user's signup, the funnel leaks, weekends are quieter), and
 the charts as rendered components: empty states, the hidden tables, the
