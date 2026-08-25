@@ -17,13 +17,36 @@ export type RangePreset = (typeof RANGE_PRESETS)[number]
 export interface DateRange {
   from: Date
   to: Date
-  /** The period of the same length ending where this one starts. */
+  /**
+   * The comparison window. It ends where the current one starts and is as
+   * long as the part of the current window that has elapsed, so a range
+   * that ends today (a partial day) is not compared against a full period.
+   */
   previousFrom: Date
   previousTo: Date
+  /** `to`, or now if the range runs into the future. What the deltas measure up to. */
+  effectiveTo: Date
   preset: RangePreset | 'custom'
 }
 
+/** Custom ranges are clamped to this many days; hour buckets to this many. */
+export const MAX_RANGE_DAYS = 400
+export const MAX_HOUR_BUCKET_DAYS = 14
+/** Dates before this are a typo, not a query. */
+export const EARLIEST = new Date('2000-01-01T00:00:00Z')
+
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+/** `2026-02-31` parses as March 3rd in JavaScript; only a real calendar date passes. */
+export function parseUtcDay(text: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text)
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const date = new Date(Date.UTC(y, mo - 1, d))
+  const real =
+    date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d
+  return real ? date : null
+}
 
 const rangeSchema = z.object({
   range: z.enum(RANGE_PRESETS).optional(),
@@ -49,6 +72,19 @@ export function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 }
 
+function withComparison(from: Date, to: Date, now: Date, preset: DateRange['preset']): DateRange {
+  const effectiveTo = new Date(Math.min(to.getTime(), Math.max(now.getTime(), from.getTime())))
+  const elapsed = effectiveTo.getTime() - from.getTime()
+  return {
+    from,
+    to,
+    previousFrom: new Date(from.getTime() - elapsed),
+    previousTo: from,
+    effectiveTo,
+    preset,
+  }
+}
+
 export function parseRange(params: SearchParams, now = new Date()): DateRange {
   const r = rangeSchema.safeParse({
     range: first(params.range),
@@ -59,42 +95,41 @@ export function parseRange(params: SearchParams, now = new Date()): DateRange {
   const todayEnd = new Date(startOfUtcDay(now).getTime() + DAY)
 
   if (p.from && p.to) {
-    const from = new Date(`${p.from}T00:00:00Z`)
-    const to = new Date(new Date(`${p.to}T00:00:00Z`).getTime() + DAY)
-    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && to > from) {
-      const length = to.getTime() - from.getTime()
-      return {
-        from,
-        to,
-        previousFrom: new Date(from.getTime() - length),
-        previousTo: from,
-        preset: 'custom',
-      }
+    const from = parseUtcDay(p.from)
+    const toDay = parseUtcDay(p.to)
+    if (from && toDay && from >= EARLIEST && from <= todayEnd && toDay >= from) {
+      // End inclusive, then clamped to today and to the maximum span.
+      const to = new Date(
+        Math.min(toDay.getTime() + DAY, todayEnd.getTime(), from.getTime() + MAX_RANGE_DAYS * DAY),
+      )
+      if (to > from) return withComparison(from, to, now, 'custom')
     }
   }
   const preset: RangePreset = p.range ?? '30d'
   const days = Number(preset.replace('d', ''))
   const from = new Date(todayEnd.getTime() - days * DAY)
-  return {
-    from,
-    to: todayEnd,
-    previousFrom: new Date(from.getTime() - days * DAY),
-    previousTo: from,
-    preset,
-  }
+  return withComparison(from, todayEnd, now, preset)
 }
 
 export const BUCKETS = ['hour', 'day'] as const
 export type Bucket = (typeof BUCKETS)[number]
 
-/** Hour buckets up to three days; past that the chart would be a wall of points. */
+/** Hour buckets up to three days by default; past that the chart would be a wall of points. */
 export function chooseBucket(range: Pick<DateRange, 'from' | 'to'>): Bucket {
   return range.to.getTime() - range.from.getTime() <= 3 * DAY ? 'hour' : 'day'
 }
 
+/**
+ * A requested bucket is honoured only where it makes sense: hours over a
+ * year would be nine thousand points to draw and a query anyone could use
+ * to tie the server up.
+ */
 export function parseBucket(params: SearchParams, range: DateRange): Bucket {
   const v = first(params.bucket)
-  return v === 'hour' || v === 'day' ? v : chooseBucket(range)
+  const days = (range.to.getTime() - range.from.getTime()) / DAY
+  if (v === 'hour') return days <= MAX_HOUR_BUCKET_DAYS ? 'hour' : 'day'
+  if (v === 'day') return 'day'
+  return chooseBucket(range)
 }
 
 export const BREAKDOWNS = ['country', 'plan'] as const

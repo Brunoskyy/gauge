@@ -54,6 +54,17 @@ describe('shapeRetention', () => {
     expect(m.cohorts[2]?.cells.map((c) => c?.users ?? null)).toEqual([10, null, null, null])
   })
 
+  it('flags the week containing now as partial, and only that one', () => {
+    const sizes = [
+      { cohort: w(0), size: 100 },
+      { cohort: w(3), size: 10 },
+    ]
+    const m = shapeRetention([], sizes, now)
+    // now is 23 days after w(0): weeks 0..2 are complete, week 3 is in progress.
+    expect(m.cohorts[0]?.cells.map((c) => c?.partial ?? null)).toEqual([false, false, false, true])
+    expect(m.cohorts[1]?.cells.map((c) => c?.partial ?? null)).toEqual([true, null, null, null])
+  })
+
   it('handles no cohorts', () => {
     expect(shapeRetention([], [], now)).toEqual({ cohorts: [], weeks: 0 })
   })

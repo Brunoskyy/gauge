@@ -18,7 +18,7 @@ async function RetentionWidget({ range }: { range: DateRange }) {
       <p className="text-muted mb-4 text-sm">
         Each row is everyone who signed up that week (Monday, UTC). Each cell is the share of them
         who did anything besides sign up during the week shown. Empty cells are weeks that have not
-        happened yet.
+        happened yet; the dashed cell in each row is the week still in progress.
       </p>
       <Heatmap matrix={data} />
       <QueryTime entries={[['retention', ms]]} />

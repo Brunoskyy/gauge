@@ -13,8 +13,11 @@ export interface RetentionMatrix {
   cohorts: Array<{
     cohort: Date
     size: number
-    /** Index = weeks since signup; null where the week has not happened yet. */
-    cells: Array<{ users: number; ratio: number } | null>
+    /**
+     * Index = weeks since signup; null where the week has not happened yet.
+     * `partial` marks the week that contains now: its ratio is still moving.
+     */
+    cells: Array<{ users: number; ratio: number; partial: boolean } | null>
   }>
   weeks: number
 }
@@ -49,7 +52,7 @@ export function shapeRetention(
       if (w > elapsed || size === 0) cells.push(null)
       else {
         const users = w === 0 ? size : (m?.get(w) ?? 0)
-        cells.push({ users, ratio: users / size })
+        cells.push({ users, ratio: users / size, partial: w === elapsed })
       }
     }
     return { cohort, size, cells }

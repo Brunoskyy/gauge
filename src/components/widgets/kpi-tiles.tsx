@@ -1,12 +1,14 @@
 import { delta, formatCount, formatDelta, formatPercent } from '@/lib/format'
 import type { DateRange } from '@/lib/params'
-import { kpisWithPrevious } from '@/lib/queries/overview'
+import { CONVERSION_WINDOW_DAYS, kpisWithPrevious } from '@/lib/queries/overview'
 
 import { QueryTime } from '../query-time'
 
 /**
- * Four hero numbers with their change against the previous period of the
- * same length. The delta is text with a sign, colored second, so it reads
+ * Four hero numbers with their change against the previous period. The
+ * current window is counted only up to now, and the previous one is as long
+ * as that elapsed part, so a range ending today is not compared against a
+ * full period. The delta is text with a sign, colored second, so it reads
  * without the color.
  */
 export async function KpiTiles({ range }: { range: DateRange }) {
@@ -30,10 +32,10 @@ export async function KpiTiles({ range }: { range: DateRange }) {
       d: delta(current.sessions, previous.sessions),
     },
     {
-      label: 'Signup to share',
+      label: `Signup to share, within ${CONVERSION_WINDOW_DAYS} days`,
       value: formatPercent(conv(current)),
       d: delta(conv(current), conv(previous)),
-      hint: `${formatCount(current.converted)} of ${formatCount(current.signups)} signups`,
+      hint: `${formatCount(current.converted)} of ${formatCount(current.signups)} signups old enough to count`,
     },
   ]
   return (

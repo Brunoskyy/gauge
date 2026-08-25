@@ -55,11 +55,12 @@ export function Heatmap({ matrix }: { matrix: RetentionMatrix }) {
                 cell ? (
                   <td
                     key={w}
-                    className="rounded-sm px-1 py-1.5 text-center"
+                    className={`rounded-sm px-1 py-1.5 text-center ${cell.partial ? 'opacity-60 outline-1 -outline-offset-1 outline-dashed' : ''}`}
                     style={cellStyle(cell.ratio)}
-                    title={`${cell.users} of ${c.size} users active ${w === 0 ? 'in week 0' : `${w} week${w === 1 ? '' : 's'} later`}`}
+                    title={`${cell.users} of ${c.size} users active ${w === 0 ? 'in week 0' : `${w} week${w === 1 ? '' : 's'} later`}${cell.partial ? ' (week still in progress)' : ''}`}
                   >
                     {formatPercent(cell.ratio, 0)}
+                    {cell.partial && <span className="sr-only"> (week in progress)</span>}
                   </td>
                 ) : (
                   <td key={w} className="bg-line/40 rounded-sm" aria-label="Not yet" />
@@ -69,6 +70,9 @@ export function Heatmap({ matrix }: { matrix: RetentionMatrix }) {
           ))}
         </tbody>
       </table>
+      <p className="text-muted mt-2 text-xs">
+        Dashed cells are the current week: the number will keep moving until it ends.
+      </p>
     </div>
   )
 }

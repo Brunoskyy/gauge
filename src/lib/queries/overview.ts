@@ -10,17 +10,30 @@ export interface Kpis {
   activeUsers: number
   events: number
   sessions: number
+  /** Signups old enough to have had the whole conversion window. */
   signups: number
-  /** Users who signed up in the range and shared something afterwards. */
+  /** Of those, the ones who shared within the window. */
   converted: number
 }
+
+/**
+ * Conversion is "shared within a week of signing up". A fixed window is what
+ * makes two periods comparable: without it, older signups have simply had
+ * more time, and every previous period looks better than the current one.
+ */
+export const CONVERSION_WINDOW_DAYS = 7
 
 /**
  * One pass over the range for the counts, one correlated count for the
  * funnel end. Everything is COUNT over an index range on ts; see the README
  * for the plan.
  */
-export async function kpis(from: Date, to: Date): Promise<Kpis> {
+export async function kpis(from: Date, to: Date, now = new Date()): Promise<Kpis> {
+  // Signups newer than the window have not had their chance yet; they are left out.
+  const matureBefore = new Date(
+    Math.min(to.getTime(), now.getTime() - CONVERSION_WINDOW_DAYS * 86_400_000),
+  )
+  const window = Prisma.sql`make_interval(days => ${CONVERSION_WINDOW_DAYS})`
   const rows = await db.$queryRaw<
     Array<{ active_users: bigint; events: bigint; sessions: bigint }>
   >(Prisma.sql`
@@ -34,10 +47,11 @@ export async function kpis(from: Date, to: Date): Promise<Kpis> {
     SELECT count(*) AS signups,
            count(*) FILTER (WHERE EXISTS (
              SELECT 1 FROM events e
-             WHERE e.user_id = u.id AND e.name = 'shared' AND e.ts >= u.signed_up_at
+             WHERE e.user_id = u.id AND e.name = 'shared'
+               AND e.ts >= u.signed_up_at AND e.ts < u.signed_up_at + ${window}
            )) AS converted
     FROM users u
-    WHERE u.signed_up_at >= ${from} AND u.signed_up_at < ${to}
+    WHERE u.signed_up_at >= ${from} AND u.signed_up_at < ${matureBefore}
   `)
   const r = rows[0]
   const f = funnel[0]
@@ -50,11 +64,12 @@ export async function kpis(from: Date, to: Date): Promise<Kpis> {
   }
 }
 
-export function kpisWithPrevious(range: DateRange) {
+/** Current counts run up to `effectiveTo`, so a period that ends today is compared on equal footing. */
+export function kpisWithPrevious(range: DateRange, now = new Date()) {
   return timed(async () => {
     const [current, previous] = await Promise.all([
-      kpis(range.from, range.to),
-      kpis(range.previousFrom, range.previousTo),
+      kpis(range.from, range.effectiveTo, now),
+      kpis(range.previousFrom, range.previousTo, now),
     ])
     return { current, previous }
   })

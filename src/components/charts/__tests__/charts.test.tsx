@@ -99,7 +99,11 @@ describe('Heatmap', () => {
             {
               cohort: day(0),
               size: 50,
-              cells: [{ users: 50, ratio: 1 }, { users: 20, ratio: 0.4 }, null],
+              cells: [
+                { users: 50, ratio: 1, partial: false },
+                { users: 20, ratio: 0.4, partial: false },
+                null,
+              ],
             },
           ],
         }}
@@ -110,6 +114,28 @@ describe('Heatmap', () => {
     expect(screen.getByText('40%')).toBeInTheDocument()
     expect(screen.getByLabelText('Not yet')).toBeInTheDocument()
     expect(screen.getByTitle('20 of 50 users active 1 week later')).toBeInTheDocument()
+  })
+
+  it('marks the week in progress as partial, in the title and for screen readers', () => {
+    render(
+      <Heatmap
+        matrix={{
+          weeks: 2,
+          cohorts: [
+            {
+              cohort: day(0),
+              size: 50,
+              cells: [
+                { users: 50, ratio: 1, partial: false },
+                { users: 5, ratio: 0.1, partial: true },
+              ],
+            },
+          ],
+        }}
+      />,
+    )
+    expect(screen.getByTitle(/week still in progress/)).toHaveTextContent('10%')
+    expect(screen.getByText(/week in progress/)).toBeInTheDocument()
   })
 
   it('handles no cohorts', () => {
