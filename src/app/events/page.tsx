@@ -32,12 +32,16 @@ async function Results({
 }) {
   const [page, total] = await Promise.all([listEvents(range, filters), countEvents(range, filters)])
   const last = page.data.rows[page.data.rows.length - 1]
+  const query = withParams(params, { cursor: null })
   return (
     <div>
+      {/* Keyed on the query: Next keeps the page segment mounted across a
+          search-param change, and the table's rows and cursor must not survive it. */}
       <EventsTable
+        key={query}
         initial={page.data.rows.map(toDto)}
         nextCursor={page.data.hasMore && last ? formatCursor(last) : null}
-        query={withParams(params, { cursor: null })}
+        query={query}
         total={total.data}
       />
       <QueryTime

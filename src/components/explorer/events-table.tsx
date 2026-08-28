@@ -26,10 +26,22 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
   'use no memo'
   const [rows, setRows] = useState(initial)
   const [cursor, setCursor] = useState(nextCursor)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<EventDto | null>(null)
   const parent = useRef<HTMLDivElement>(null)
+  /** The row that opened the drawer, so focus can go back to it. */
+  const trigger = useRef<HTMLElement | null>(null)
+  // The page keys this component on the query, so a new query remounts it.
+  // This is the belt to that suspender: if it is ever rendered without the
+  // key, a changed query still resets rows, cursor and selection.
+  const [seenQuery, setSeenQuery] = useState(query)
+  if (query !== seenQuery) {
+    setSeenQuery(query)
+    setRows(initial)
+    setCursor(nextCursor)
+    setError(null)
+    setSelected(null)
+  }
 
   // The React Compiler cannot memoize TanStack Virtual's instance; the directive above opts out.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -56,7 +68,6 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
   useEffect(() => {
     if (!cursor || inflight.current || lastVisible < rows.length - 1) return
     inflight.current = true
-    setLoading(true)
     fetch(`/api/events${query}${query ? '&' : '?'}cursor=${cursor}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`The server answered ${r.status}.`)
@@ -72,7 +83,6 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
       })
       .finally(() => {
         inflight.current = false
-        if (alive.current) setLoading(false)
       })
   }, [cursor, lastVisible, rows.length, query])
 
@@ -99,7 +109,7 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
               </span>
             ))}
           </div>
-          <div ref={parent} className="overflow-auto" style={{ height: 560 }}>
+          <div ref={parent} tabIndex={-1} className="overflow-auto" style={{ height: 560 }}>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {items.map((item) => {
                 const row = rows[item.index]
@@ -130,7 +140,10 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
                     role="row"
                     aria-rowindex={item.index + 1}
                     style={style}
-                    onClick={() => setSelected(row)}
+                    onClick={(e) => {
+                      trigger.current = e.currentTarget
+                      setSelected(row)
+                    }}
                     className={`hover:bg-bg focus-visible:bg-bg grid ${COLS} items-center px-4 text-left text-sm`}
                   >
                     <span role="gridcell" className="tabular text-muted font-mono text-xs">
@@ -160,66 +173,78 @@ export function EventsTable({ initial, nextCursor, query, total }: Props) {
           </div>
         </div>
       </div>
-      {selected && <RowDrawer row={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <RowDrawer
+          row={selected}
+          onClose={() => {
+            setSelected(null)
+            // The row may have been virtualized away; fall back to the grid.
+            const target = trigger.current?.isConnected ? trigger.current : parent.current
+            target?.focus()
+          }}
+        />
+      )}
     </div>
   )
 }
 
+/**
+ * A native dialog: `showModal()` makes everything behind it inert, keeps Tab
+ * inside, and closes on Escape on its own. The parent restores focus.
+ */
 function RowDrawer({ row, onClose }: { row: EventDto; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  // Depends on nothing that changes while open: focus is taken once, on open.
   useEffect(() => {
+    const el = dialog.current
+    if (!el) return
+    if (!el.open) el.showModal()
     closeRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
   return (
-    <div className="fixed inset-0 z-40 flex justify-end" role="presentation">
-      <button
-        type="button"
-        aria-label="Close details"
-        className="absolute inset-0 bg-black/30"
-        onClick={onClose}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="row-title"
-        className="bg-surface border-line relative flex h-full w-full max-w-md flex-col gap-4 overflow-auto border-l p-5 shadow-2xl"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <h2 id="row-title" className="font-mono text-sm font-medium">
-            {row.name} <span className="text-muted">#{row.id}</span>
-          </h2>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="text-muted hover:text-ink rounded px-2 text-lg leading-none"
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-        <dl className="grid grid-cols-[6rem_1fr] gap-y-2 text-sm">
-          <dt className="text-muted">Time</dt>
-          <dd className="font-mono text-xs">{formatDateTime(new Date(row.ts))}</dd>
-          <dt className="text-muted">User</dt>
-          <dd className="font-mono text-xs">{row.userId}</dd>
-          <dt className="text-muted">Session</dt>
-          <dd className="font-mono text-xs">{row.sessionId}</dd>
-          <dt className="text-muted">Plan</dt>
-          <dd>{row.plan}</dd>
-          <dt className="text-muted">Country</dt>
-          <dd>{row.country}</dd>
-        </dl>
-        <div>
-          <h3 className="text-muted mb-1 text-xs">Props</h3>
-          <pre className="bg-bg overflow-auto rounded-md p-3 font-mono text-xs">
-            {JSON.stringify(row.props, null, 2)}
-          </pre>
-        </div>
-      </aside>
-    </div>
+    <dialog
+      ref={dialog}
+      aria-labelledby="row-title"
+      onClose={onClose}
+      onClick={(e) => {
+        // A click on the backdrop lands on the dialog element itself.
+        if (e.target === dialog.current) onClose()
+      }}
+      className="bg-surface border-line text-ink fixed inset-y-0 right-0 left-auto m-0 flex h-dvh max-h-none w-full max-w-md flex-col gap-4 overflow-auto border-l p-5 shadow-2xl backdrop:bg-black/30"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <h2 id="row-title" className="font-mono text-sm font-medium">
+          {row.name} <span className="text-muted">#{row.id}</span>
+        </h2>
+        <button
+          ref={closeRef}
+          type="button"
+          onClick={onClose}
+          className="text-muted hover:text-ink rounded px-2 text-lg leading-none"
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+      <dl className="grid grid-cols-[6rem_1fr] gap-y-2 text-sm">
+        <dt className="text-muted">Time</dt>
+        <dd className="font-mono text-xs">{formatDateTime(new Date(row.ts))}</dd>
+        <dt className="text-muted">User</dt>
+        <dd className="font-mono text-xs">{row.userId}</dd>
+        <dt className="text-muted">Session</dt>
+        <dd className="font-mono text-xs">{row.sessionId}</dd>
+        <dt className="text-muted">Plan</dt>
+        <dd>{row.plan}</dd>
+        <dt className="text-muted">Country</dt>
+        <dd>{row.country}</dd>
+      </dl>
+      <div>
+        <h3 className="text-muted mb-1 text-xs">Props</h3>
+        <pre className="bg-bg overflow-auto rounded-md p-3 font-mono text-xs">
+          {JSON.stringify(row.props, null, 2)}
+        </pre>
+      </div>
+    </dialog>
   )
 }
