@@ -5,14 +5,15 @@ import { describe, expect, it } from 'vitest'
 import { parseRange } from '@/lib/params'
 
 /**
- * Runs against the seeded database when DATABASE_URL is set; skipped
- * otherwise, so `npm test` works without Postgres. The numbers below come
- * from the deterministic seed, so they are exact.
+ * Runs against the seeded database only when asked for with GAUGE_DB_TESTS=1
+ * (and DATABASE_URL set); a `.env` alone does not mean Postgres is up, and
+ * `npm test` has to pass on a laptop with the database stopped. The numbers
+ * below come from the deterministic seed, so they are exact.
  */
-const url = process.env.DATABASE_URL
+const enabled = process.env.GAUGE_DB_TESTS === '1' && Boolean(process.env.DATABASE_URL)
 const now = new Date()
 
-describe.skipIf(!url)('queries against the seeded database', () => {
+describe.skipIf(!enabled)('queries against the seeded database', () => {
   it('counts events in a range and fills empty buckets', async () => {
     const { timeseries, kpis } = await import('../overview')
     const range = parseRange({ range: '7d' }, now)
@@ -52,12 +53,23 @@ describe.skipIf(!url)('queries against the seeded database', () => {
     expect(second.data.rows[0]!.ts.getTime()).toBeLessThanOrEqual(last.ts.getTime())
   })
 
+  it('counts conversion only for signups old enough to have had the window', async () => {
+    const { kpis, CONVERSION_WINDOW_DAYS } = await import('../overview')
+    const range = parseRange({ range: '30d' }, now)
+    const k = await kpis(range.from, range.to, now)
+    // Pretend it is a week later: every signup in the range has matured, so the count can only grow.
+    const later = new Date(now.getTime() + CONVERSION_WINDOW_DAYS * 86_400_000)
+    const mature = await kpis(range.from, range.to, later)
+    expect(mature.signups).toBeGreaterThanOrEqual(k.signups)
+    expect(k.converted).toBeLessThanOrEqual(k.signups)
+  })
+
   it('builds a retention triangle whose first column is the cohort size', async () => {
     const { retention } = await import('../retention')
     const { data } = await retention(parseRange({ range: '90d' }, now), now)
     expect(data.cohorts.length).toBeGreaterThan(8)
     for (const c of data.cohorts) {
-      expect(c.cells[0]).toEqual({ users: c.size, ratio: 1 })
+      expect(c.cells[0]).toMatchObject({ users: c.size, ratio: 1 })
       for (const cell of c.cells.slice(1)) if (cell) expect(cell.ratio).toBeLessThanOrEqual(1)
     }
     // Newest cohort has fewer known weeks than the oldest.

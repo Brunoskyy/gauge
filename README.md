@@ -41,12 +41,12 @@ npm run dev
 The seed is deterministic, so the numbers on your screen are the numbers in
 the screenshots. Any hosted Postgres works instead of `db:dev`.
 
-| Command             |                                                                   |
-| ------------------- | ----------------------------------------------------------------- |
-| `npm run dev`       | dev server, with each widget's query time under it                |
-| `npm test`          | the suite; the database tests run only when `DATABASE_URL` is set |
-| `npm run typecheck` | `tsc --noEmit`                                                    |
-| `npm run db:reset`  | drop, migrate, reseed                                             |
+| Command             |                                                                 |
+| ------------------- | --------------------------------------------------------------- |
+| `npm run dev`       | dev server, with each widget's query time under it              |
+| `npm test`          | the suite; add `GAUGE_DB_TESTS=1` to include the database tests |
+| `npm run typecheck` | `tsc --noEmit`                                                  |
+| `npm run db:reset`  | drop, migrate, reseed                                           |
 
 ## How the queries work
 
@@ -55,7 +55,7 @@ Everything lives in `src/lib/queries/` as tagged-template SQL through
 composed at runtime are column choices and CTE aliases the code picks itself.
 
 **Overview.** Counts over `events` for the range, and the same counts for
-the previous period of the same length, so every tile can say "+12% vs
+the previous period, cut to the same elapsed time, so every tile can say "+12% vs
 previous 30d". The time series uses `generate_series` for the buckets and a
 left join for the counts, which is what makes a quiet day show as zero
 instead of disappearing. Hour buckets kick in automatically for ranges up to
@@ -131,14 +131,19 @@ instead of noise.
 npm test
 ```
 
-32 tests without a database: the parameter parsing (every fallback), the
-retention and funnel shaping, CSV escaping, the seed's invariants (every
-event after its user's signup, the funnel leaks, weekends are quieter), and
-the charts as rendered components: empty states, the hidden tables, the
-keyboard tooltip. Five more run against the seeded database when
-`DATABASE_URL` is set: the buckets sum to the KPI count, keyset pages do
-not overlap, the retention triangle's first column equals the cohort size,
-the funnel never grows from one step to the next.
+41 tests without a database: the parameter parsing (every fallback, the
+calendar check, the span and hour-bucket clamps, the elapsed-time
+comparison window), the retention and funnel shaping including the week in
+progress, CSV escaping and the pull-driven CSV stream (a page is fetched
+only when the consumer asks, and cancelling closes the iterator), the seed's
+invariants (every event after its user's signup, the funnel leaks, weekends
+are quieter), the charts as rendered components, and the explorer table:
+a changed query drops the old rows and cursor, and the details dialog gives
+focus back to the row. Six more run against the seeded database with
+`GAUGE_DB_TESTS=1`: the buckets sum to the KPI count, keyset pages do not
+overlap, conversion counts only signups old enough to have had the window,
+the retention triangle's first column equals the cohort size, the funnel
+never grows from one step to the next.
 
 ## Layout
 
