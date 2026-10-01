@@ -11,73 +11,78 @@
 
 <br>
 
-Northwind Notes is a made-up note-taking product with five thousand users and
-three hundred thousand events over the last ninety days. Gauge is the
-dashboard its team would open on a Monday: how many people were active, what
-they did, which signup cohorts came back, and where the funnel leaks.
+A gauge is the instrument you read to know where a number stands, which is
+the whole job of a dashboard. Northwind Notes is a made-up note-taking product
+with five thousand users and three hundred thousand events over ninety days;
+Gauge is what its team would open on a Monday: who was active, what they did,
+which cohorts came back, where the funnel leaks.
 
-I built it to work the way real analytics tools have to: every aggregate is
-one SQL query over an index, every filter is in the URL so a view can be
-pasted into a chat, the charts are SVG I drew myself, and the events table
-scrolls through a hundred thousand rows without loading them.
+Every aggregate is one SQL query over an index, every filter is in the URL so
+a view can be pasted into a chat, the charts are SVG I drew myself, and the
+events table scrolls through a hundred thousand rows without loading them.
 
 ![The overview: KPI tiles, events over time, events by country](docs/screenshots/overview.jpg)
 
 ## Running it
 
-Node 24, and there is an `.nvmrc`.
+You need Node 24 (`nvm use` reads the `.nvmrc`). Postgres comes from
+`prisma dev`, a local server with no Docker, or any hosted Postgres.
 
-```bash
-nvm use
-npm install
+1. Clone and install:
 
-npm run db:dev          # local Postgres, no Docker. Prints a postgres:// URL.
-cp .env.example .env    # paste the URL in
-npm run db:migrate
-npm run db:seed         # about twenty seconds for 300k rows
-npm run dev
-```
+   ```bash
+   git clone https://github.com/Brunoskyy/gauge.git && cd gauge
+   nvm use
+   npm install
+   ```
 
-The seed is deterministic, so the numbers on your screen are the numbers in
-the screenshots. Any hosted Postgres works instead of `db:dev`.
+2. Terminal 1, from the repo root, start Postgres and leave it running. It
+   prints a few URLs; copy the one that starts with `postgres://`:
 
-| Command             |                                                                 |
-| ------------------- | --------------------------------------------------------------- |
-| `npm run dev`       | dev server, with each widget's query time under it              |
-| `npm test`          | the suite; add `GAUGE_DB_TESTS=1` to include the database tests |
-| `npm run typecheck` | `tsc --noEmit`                                                  |
-| `npm run db:reset`  | drop, migrate, reseed                                           |
+   ```bash
+   npm run db:dev
+   ```
+
+3. Terminal 2, from the repo root:
+
+   ```bash
+   cp .env.example .env     # set DATABASE_URL to the URL from step 2
+   npm run db:migrate
+   npm run db:seed          # about twenty seconds for 300k rows
+   npm run dev
+   ```
+
+4. Open http://localhost:3000.
+
+Stop with Ctrl+C in both terminals. `npm run db:reset` drops, migrates and
+reseeds. The data ends at the start of today (UTC), so two seeds on the same
+day give the same numbers; set `SEED_NOW=2026-09-30` to pin it.
+
+| Command (repo root) | |
+| --- | --- |
+| `npm test` | 41 tests, no database needed |
+| `GAUGE_DB_TESTS=1 npm test` | adds 6 tests against the seeded database |
+| `npm run typecheck` | `tsc --noEmit` |
 
 ## How the queries work
 
 Everything lives in `src/lib/queries/` as tagged-template SQL through
-`prisma.$queryRaw`. Values are always bound parameters; the only fragments
-composed at runtime are column choices and CTE aliases the code picks itself.
+`prisma.$queryRaw`, with values always bound as parameters.
 
-**Overview.** Counts over `events` for the range, and the same counts for
-the previous period, cut to the same elapsed time, so every tile can say "+12% vs
-previous 30d". The time series uses `generate_series` for the buckets and a
-left join for the counts, which is what makes a quiet day show as zero
-instead of disappearing. Hour buckets kick in automatically for ranges up to
-three days; the toggle overrides it.
+- **Overview:** counts for the range and for the previous period cut to the
+  same elapsed time, so a tile can say "+12% vs previous 30d". Buckets come
+  from `generate_series` with a left join, so a quiet day shows as zero.
+- **Explorer:** filters are `AND`ed fragments, including
+  `props @> '{"channel":"link"}'::jsonb` for `key=value`. Pages are keyset
+  paginated on `(ts, id)`, so page fifty costs what page one does, and the
+  count stops at "100K+".
+- **Retention:** cohorts by signup week, distinct `(user, week)` activity,
+  group by cohort and weeks since. The triangle is shaped in TypeScript,
+  where it is testable.
+- **Funnels:** step _n_ joins step _n-1_ on `user_id` with
+  `e.ts > previous.ts`, so a user counts only if the events happened in order.
 
-**Explorer.** Filters compose as `AND`ed fragments: `name IN (...)`,
-`plan IN (...)`, and `props @> '{"channel":"link"}'::jsonb` for anything
-typed as `key=value`. Pages are keyset-paginated on `(ts, id)` descending,
-so page fifty costs the same as page one, and a row inserted meanwhile
-cannot shift the others. The count is capped at a hundred thousand: past
-that the number is a "100K+" and the scan stops.
-
-**Retention.** One CTE for the cohorts (signup week, Monday UTC), one for
-`DISTINCT (user, week)` activity joined on `(user_id, ts)`, then a group by
-cohort and weeks-since. Shaping that into a triangle with nulls for weeks
-that have not happened yet is done in TypeScript, where it is testable.
-
-**Funnels.** Step _n_ is a CTE joined to step _n-1_ on `user_id` with
-`e.ts > previous.ts`, so a user counts only if the events happened in
-order. Names are parameters; only the aliases `s0…s5` are literal.
-
-What Postgres does with them, on the seeded data (`EXPLAIN ANALYZE`, 30 days):
+What Postgres does with them on the seeded data (`EXPLAIN ANALYZE`, 30 days):
 
 ```
 kpis         Index Scan using events_user_id_ts_idx, 204k rows, 138 ms
@@ -86,94 +91,45 @@ explorer     Index Scan Backward on events_ts_idx, stops after 101 rows, 0.9 ms
 conversion   Seq Scan on users + Bitmap Index Scan on (user_id, ts) per user, 33 ms
 ```
 
-The KPI query is the slow one: three distinct counts over two hundred
-thousand rows. A real deployment would keep a daily rollup table; here the
-whole thing fits in memory and 138 ms is fine for a dashboard.
+The KPI query is the slow one. A real deployment would keep a daily rollup;
+at this size 138 ms is fine for a dashboard.
 
 ## Things worth opening
 
-**`src/lib/params.ts`.** Every URL parameter parsed in one place with zod: date
-range and presets, bucket, breakdown, explorer filters, cursor, funnel steps.
-A bad value falls back instead of breaking the page, so a hand-edited link
-still opens. `withParams` builds the next link from the current ones, which
-is how the toggles and presets work without any client state.
-
-**`src/components/charts/line-chart.tsx`.** The tooltip follows the pointer
-through `bisector`, and the arrow keys move it point by point when the SVG has
-focus. Under it is a visually hidden table with the same numbers, and the SVG
-has a title and a description, so a screen reader gets the total and the
-range before the shape.
-
-**`src/components/charts/heatmap.tsx`.** The retention grid is a `<table>`,
-with the percentage written in every cell. Color is a second reading of the
-number, not the only one; the ramp is one hue, light to dark.
-
-**`src/components/explorer/events-table.tsx`.** TanStack Virtual for the
-rows, a keyset cursor for the pages, one request in flight at a time tracked
-in a ref rather than cancelled in an effect cleanup, because the effect
-re-runs on every scroll and cancelling would drop a page that was already on
-its way. Found that one the hard way.
-
-**`src/app/api/events/export/route.ts`.** The CSV export is a
-`ReadableStream` that pulls a thousand rows at a time through the same query,
-so the download starts immediately and the server never holds the whole
-result.
-
-**`src/lib/seed/generate.ts`.** A seeded PRNG and a small model of how people
-use a product: signups that ramp up, daytime peaks in each user's zone,
-weekends at a third of weekday traffic, a funnel that leaks at every step,
-paying plans that stick around. It is what makes the charts look like data
-instead of noise.
+- **`src/lib/params.ts`:** every URL parameter parsed with zod in one place. A
+  bad value falls back instead of breaking the page.
+- **`src/components/charts/line-chart.tsx`:** the tooltip follows the pointer
+  and the arrow keys, with a hidden table of the same numbers for screen readers.
+- **`src/components/charts/heatmap.tsx`:** the retention grid is a `<table>`
+  with the percentage in every cell; color is a second reading, not the only one.
+- **`src/components/explorer/events-table.tsx`:** TanStack Virtual plus a
+  keyset cursor, with one request in flight tracked in a ref, because
+  cancelling in an effect cleanup dropped pages already on their way.
+- **`src/app/api/events/export/route.ts`:** the CSV is a `ReadableStream`
+  that pulls a thousand rows at a time, so the download starts at once.
+- **`src/lib/seed/generate.ts`:** a seeded PRNG and a small model of real use:
+  daytime peaks, quiet weekends, a leaky funnel. It makes the charts look like data.
 
 ## Tests
 
-```bash
-npm test
-```
-
-41 tests without a database: the parameter parsing (every fallback, the
-calendar check, the span and hour-bucket clamps, the elapsed-time
-comparison window), the retention and funnel shaping including the week in
-progress, CSV escaping and the pull-driven CSV stream (a page is fetched
-only when the consumer asks, and cancelling closes the iterator), the seed's
-invariants (every event after its user's signup, the funnel leaks, weekends
-are quieter), the charts as rendered components, and the explorer table:
-a changed query drops the old rows and cursor, and the details dialog gives
-focus back to the row. Six more run against the seeded database with
-`GAUGE_DB_TESTS=1`: the buckets sum to the KPI count, keyset pages do not
-overlap, conversion counts only signups old enough to have had the window,
-the retention triangle's first column equals the cohort size, the funnel
-never grows from one step to the next.
+The 41 tests without a database cover URL parsing and its fallbacks,
+retention and funnel shaping, the CSV stream, the seed's invariants, the
+charts as rendered components and the explorer table. The 6 database tests
+check that buckets sum to the KPI count, keyset pages do not overlap, and the
+funnel never grows from one step to the next.
 
 ## Layout
 
 ```
 src/
-  lib/
-    params.ts        URL to typed filters, one place
-    queries/         overview, events, retention, funnel: the SQL
-    retention.ts     long rows to a triangle
-    funnel.ts        counts to steps and shares
-    seed/            the generator and its PRNG
-  components/
-    charts/          line, bar, heatmap, funnel; d3-scale and d3-shape only
-    widgets/         server components, one query each
-    explorer/        the virtualized table and its filters
-  app/
-    page.tsx         overview
-    events/          explorer
-    retention/       cohorts
-    funnels/         ordered steps
-    api/events/      JSON page and streaming CSV
+  lib/          params.ts, queries/ (the SQL), retention, funnel, seed/
+  components/   charts/ (d3-scale and d3-shape only), widgets/, explorer/
+  app/          overview, events/, retention/, funnels/, api/events/
 ```
 
 ## What's missing
 
-- No auth and no multi-tenancy. One product, one dashboard, anyone with the
-  URL.
-- Weeks and days are UTC. A team in São Paulo would want their own midnight,
-  which is a `date_trunc(..., AT TIME ZONE)` away and a setting to store.
-- No rollup tables. Everything is computed from raw events on each request,
-  which is right for this size and wrong past a few million rows.
+- No auth and no multi-tenancy: one product, anyone with the URL.
+- Weeks and days are UTC; a team in São Paulo would want its own midnight.
+- No rollup tables, which is right for this size and wrong past a few million rows.
 - The prop filter is containment only: `channel=link`, not `words>500`.
-- Saved views and alerts would be the natural next features.
