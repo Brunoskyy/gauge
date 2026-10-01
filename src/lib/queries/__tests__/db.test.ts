@@ -86,8 +86,13 @@ describe.skipIf(!enabled)('queries against the seeded database', () => {
       'shared',
     ])
     expect(data).toHaveLength(4)
-    for (let i = 1; i < data.length; i += 1)
-      expect(data[i]!.users).toBeLessThanOrEqual(data[i - 1]!.users)
+    // Every step reads its own count: when the counts shared one column name,
+    // all but one came back as zero, and a zero still "never grows".
+    for (let i = 1; i < data.length; i += 1) {
+      expect(data[i]!.users).toBeGreaterThan(0)
+      expect(data[i]!.users).toBeLessThan(data[i - 1]!.users)
+    }
+    expect(new Set(data.map((s) => s.users)).size).toBe(4)
     // The seed spans exactly ninety days ending at seed time; a few signups sit just outside.
     expect(data[0]!.users).toBeGreaterThan(4900)
     expect(data[3]!.ofFirst).toBeGreaterThan(0.1)
